@@ -4,24 +4,18 @@ import { spawn } from 'child_process';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { BugJobData } from '../queue/queue.service';
+import { getFeatureMapText } from './feature-map';
 
-export interface AnalysisResult {
-  file: string;
-  line: number;
+export interface ResearchResult {
+  files: string[];
   rootCause: string;
-  confidence: number;
+  suggestedApproach: string;
+  references: string[];
 }
 
 export interface FixResult {
   summary: string;
   explanation: string;
-}
-
-export interface TestResult {
-  passed: boolean;
-  total: number;
-  failures: number;
-  output: string;
 }
 
 // Features que existem no frontend — tudo que não estiver aqui vai para o backend
@@ -52,94 +46,117 @@ export class AgentService {
     this.backRepoPath = this.config.get('BACK_REPO_PATH', '/repos/back');
   }
 
-  /** Retorna o repo correto baseado na feature reportada */
   getRepoPath(service: string): string {
     return FRONTEND_FEATURES.has(service) ? this.frontRepoPath : this.backRepoPath;
   }
 
-  async analyze(
+  /** Etapa 1: Pesquisador — entende o problema, pesquisa na web e documentação */
+  async research(
     data: BugJobData,
     onLog: (log: string) => void,
-  ): Promise<AnalysisResult> {
-    const prompt = this.buildAnalysisPrompt(data);
+  ): Promise<ResearchResult> {
     const repoPath = this.getRepoPath(data.service);
-    const output = await this.runClaude(prompt, data, repoPath, onLog);
-    const json = this.extractJson(output);
-    return {
-      file: json.file,
-      line: json.line,
-      rootCause: json.rootCause,
-      confidence: json.confidence,
-    };
+    const isFrontend = FRONTEND_FEATURES.has(data.service);
+    const prompt = this.buildResearchPrompt(data, isFrontend);
+    const output = await this.runCodex(prompt, data, repoPath, onLog);
+    return this.extractJson(output);
   }
 
-  async applyFix(
-    analysis: AnalysisResult,
+  /** Etapa 2: Especialista — corrige o bug e roda testes */
+  async fix(
+    research: ResearchResult,
     data: BugJobData,
     onLog: (log: string) => void,
   ): Promise<FixResult> {
-    const prompt = this.buildFixPrompt(analysis, data);
     const repoPath = this.getRepoPath(data.service);
-    const output = await this.runClaude(prompt, data, repoPath, onLog);
-    const json = this.extractJson(output);
-    return {
-      summary: json.summary,
-      explanation: json.explanation,
-    };
+    const isFrontend = FRONTEND_FEATURES.has(data.service);
+    const prompt = this.buildFixPrompt(research, data, isFrontend);
+    const output = await this.runCodex(prompt, data, repoPath, onLog);
+    return this.extractJson(output);
   }
 
-  async runTests(repoPath: string, onLog: (log: string) => void): Promise<TestResult> {
-    return new Promise((resolve) => {
-      const proc = spawn('npm', ['run', 'test', '--', '--passWithNoTests'], {
-        cwd: repoPath,
-        env: { ...process.env },
-        shell: true,
-      });
+  private buildResearchPrompt(data: BugJobData, isFrontend: boolean): string {
+    const stack = isFrontend
+      ? `React 19, Vite 7, TanStack Router/Query, Zustand, shadcn/ui, Tailwind CSS 4, i18next, Vitest.
+O frontend é organizado por features em src/features/<nome>/. Cada feature tem seus componentes, hooks e services.`
+      : `NestJS 11, TypeORM 0.3, MySQL, BullMQ, Valkey/Redis, Jest.`;
 
-      let output = '';
+    const featureMap = isFrontend ? getFeatureMapText(data.service) : '';
 
-      proc.stdout.on('data', (chunk) => {
-        const text = chunk.toString();
-        output += text;
-        onLog(text);
-      });
+    return `
+Você é um pesquisador de bugs. Seu trabalho é ENTENDER o problema a fundo antes que um especialista corrija.
 
-      proc.stderr.on('data', (chunk) => {
-        output += chunk.toString();
-      });
+STACK DO PROJETO:
+${stack}
 
-      proc.on('close', (code) => {
-        const failures = (output.match(/FAIL /g) || []).length;
-        const total = output.match(/Tests:\s+(\d+)/)?.[1] ?? '0';
-        resolve({
-          passed: code === 0,
-          total: parseInt(total),
-          failures,
-          output,
-        });
-      });
-    });
-  }
+${featureMap ? `MAPA DO CÓDIGO:\n${featureMap}\n` : ''}BUG REPORTADO:
+Feature: ${data.service}
+Severidade: ${data.severity}
+Reportado por: ${data.reportedBy}
+Descrição: ${data.description}
 
-  async fixFailingTests(
-    testResult: TestResult,
-    repoPath: string,
-    onLog: (log: string) => void,
-  ): Promise<void> {
-    const prompt = `
-Os testes abaixo falharam após a correção do bug. Corrija APENAS os testes
-quebrados sem alterar o comportamento da aplicação. Não remova testes.
+SUAS TAREFAS:
+1. Vá DIRETO aos arquivos indicados no mapa acima — não fique buscando pela codebase
+2. Pesquise na web por issues conhecidas, bugs similares na documentação oficial das libs envolvidas (${isFrontend ? 'React, TanStack Query, Zustand, shadcn/ui, Tailwind' : 'NestJS, TypeORM, BullMQ'})
+3. Consulte a documentação oficial para confirmar o uso correto das APIs envolvidas
+4. Identifique a causa raiz com clareza
+5. Sugira a abordagem de correção — mas NÃO corrija nada, NÃO edite nenhum arquivo
 
-Output dos testes:
-${testResult.output}
-
-Responda em JSON: { "summary": "o que foi corrigido nos testes" }
+Responda SOMENTE com JSON válido, sem markdown:
+{
+  "files": ["caminho/relativo/arquivo1.ts", "caminho/relativo/arquivo2.ts"],
+  "rootCause": "descrição clara e detalhada da causa raiz",
+  "suggestedApproach": "como o bug deve ser corrigido, passo a passo",
+  "references": ["links de documentação ou issues relevantes encontrados"]
+}
     `.trim();
-
-    await this.runClaude(prompt, null, repoPath, onLog);
   }
 
-  private runClaude(
+  private buildFixPrompt(
+    research: ResearchResult,
+    data: BugJobData,
+    isFrontend: boolean,
+  ): string {
+    const stack = isFrontend
+      ? `React 19, Vite 7, TanStack Router/Query, Zustand, shadcn/ui, Tailwind CSS 4, i18next, Vitest.
+Imports usam @/ como alias para src/. Componentes UI ficam em @/components/ui/ (shadcn). Toasts usam sonner. Formulários usam React Hook Form + Zod. API usa axios via @/lib/api.ts. Auth via Zustand em @/stores/auth-store.ts.`
+      : `NestJS 11, TypeORM 0.3, MySQL, BullMQ, Valkey/Redis, Jest.
+Usa NestJS DI, TypeORM repositories, class-validator para DTOs, Guards para auth.`;
+
+    const featureMap = isFrontend ? getFeatureMapText(data.service) : '';
+
+    return `
+Você é um especialista sênior em ${isFrontend ? 'React e frontend moderno' : 'NestJS e backend Node.js'}.
+Outro agente já pesquisou e diagnosticou o bug. Seu trabalho é CORRIGIR o código e garantir que os testes passem.
+
+STACK DO PROJETO:
+${stack}
+
+${featureMap ? `MAPA DO CÓDIGO:\n${featureMap}\n` : ''}PESQUISA DO BUG:
+Arquivos envolvidos: ${research.files.join(', ')}
+Causa raiz: ${research.rootCause}
+Abordagem sugerida: ${research.suggestedApproach}
+Referências: ${research.references.join(', ') || 'nenhuma'}
+
+RELATO ORIGINAL:
+${data.description}
+
+REGRAS OBRIGATÓRIAS:
+1. Corrija APENAS o bug identificado — não refatore nada além do necessário
+2. Respeite os padrões do projeto: ${isFrontend ? 'imports com @/, shadcn/ui, i18next' : 'TypeORM repositories, NestJS DI, class-validator'}
+3. Após corrigir, rode os testes (npm run test -- --passWithNoTests) e corrija se algum quebrar
+4. Não faça push nem commit — apenas edite os arquivos
+5. Prefira soluções já existentes no código — não reinvente
+
+Responda SOMENTE com JSON válido após aplicar o fix:
+{
+  "summary": "fix(${data.service}): descrição curta em até 72 chars",
+  "explanation": "explicação detalhada do que foi corrigido e por quê"
+}
+    `.trim();
+  }
+
+  private runCodex(
     prompt: string,
     data: BugJobData | null,
     repoPath: string,
@@ -163,20 +180,17 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
       }
 
       const args = [
-        '-p',
+        '--quiet',
+        '--approval-mode',
+        'full-auto',
+        '--model',
+        'gpt-5.4-medium',
         fullPrompt,
-        '--dangerously-skip-permissions',
-        '--output-format',
-        'text',
-        '--max-budget-usd',
-        '5',
       ];
 
-      this.logger.debug(
-        `Spawning Claude Code: claude -p ... --dangerously-skip-permissions`,
-      );
+      this.logger.debug(`Spawning Codex: codex --quiet --approval-mode full-auto --model gpt-5.4-medium ...`);
 
-      const proc = spawn('claude', args, {
+      const proc = spawn('codex', args, {
         cwd: repoPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -186,7 +200,6 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
         },
       });
 
-      // Fechar stdin imediatamente para evitar warning de "no stdin data"
       proc.stdin.end();
 
       let output = '';
@@ -204,102 +217,25 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
 
       proc.on('close', (code) => {
         if (imagePath) {
-          try {
-            rmSync(imagePath, { force: true });
-          } catch {}
+          try { rmSync(imagePath, { force: true }); } catch {}
         }
 
         if (code === 0) {
           resolve(output);
         } else {
           reject(
-            new Error(
-              `Claude Code saiu com código ${code}\nSTDERR: ${errorOutput.slice(0, 500)}`,
-            ),
+            new Error(`Codex saiu com código ${code}\nSTDERR: ${errorOutput.slice(0, 500)}`),
           );
         }
       });
 
       const timeout = setTimeout(() => {
         proc.kill('SIGTERM');
-        reject(new Error('Timeout: Claude Code demorou mais de 20 minutos'));
+        reject(new Error('Timeout: Codex demorou mais de 20 minutos'));
       }, 20 * 60 * 1000);
 
       proc.on('close', () => clearTimeout(timeout));
     });
-  }
-
-  private buildAnalysisPrompt(data: BugJobData): string {
-    return `
-Você é um agente especializado na stack do DietSystem:
-- Backend: NestJS 11, TypeORM 0.3, MySQL, BullMQ, Valkey/Redis
-- Frontend: React 19, Vite 7, TanStack Router/Query, Zustand, shadcn/ui, Tailwind CSS 4, i18next
-- Testes: Jest (back) e Vitest (front)
-
-O frontend é organizado por features em src/features/<nome>/. Cada feature tem seus componentes, hooks e services.
-Features existentes: dashboard, patients, patients-overview, patient, patient-dashboard, patient-files, patient-report, patient-public-registration, meal-plan-builder, meal-plan-builder-refactor, plan-builder, templates, recipes, nutritional-guidance, food-diary-gallery, manipulated-formula, products, anamnesis, exams, exam-analysis-ia, medical-records, body-scan, comparative-photos, weight-evolution, goals, anthropometry-adult, anthropometry-pediatric, anthropometry-pregnant, anthropometry-bioimpedance, caloric-expenditure, calendar, scheduling, chat, chats, whatsapp-integration, notifications, billing, checkout, financial-control, affiliate, admin-panel, settings, users, form-builder, apps, club, news, tutorials, shared-materials, insights, tasks, auth, onboarding, audio-transcription, document-verification.
-
-Analise o bug abaixo e localize o arquivo e linha exatos no código.
-
-RELATO:
-Feature: ${data.service}
-Severidade: ${data.severity}
-Reportado por: ${data.reportedBy}
-Descrição: ${data.description}
-
-INSTRUÇÕES:
-1. Comece pela pasta src/features/${data.service}/ — ali estão os componentes, hooks e services dessa feature
-2. Localize o arquivo e a linha exatos do bug
-3. Identifique a causa raiz — considere: queries TypeORM, guards de auth, interceptors, React Query cache, rotas TanStack Router, estado Zustand, validações Zod/React Hook Form
-4. NÃO corrija nada ainda — apenas analise
-
-Responda SOMENTE com JSON válido, sem markdown, sem texto extra:
-{
-  "file": "caminho/relativo/do/arquivo.ts",
-  "line": 42,
-  "rootCause": "descrição clara da causa raiz",
-  "confidence": 85
-}
-    `.trim();
-  }
-
-  private buildFixPrompt(
-    analysis: AnalysisResult,
-    data: BugJobData,
-  ): string {
-    return `
-Você é um agente especializado na stack do DietSystem:
-- Backend: NestJS 11, TypeORM 0.3, MySQL, BullMQ, Valkey/Redis
-- Frontend: React 19, Vite 7, TanStack Router/Query, Zustand, shadcn/ui, Tailwind CSS 4, i18next
-- Testes: Jest (back) e Vitest (front)
-
-O frontend é organizado por features em src/features/<nome>/. Cada feature tem seus componentes, hooks e services.
-Imports usam @/ como alias para src/. Componentes UI ficam em @/components/ui/ (shadcn). Toasts usam sonner. Formulários usam React Hook Form + Zod. API usa axios via @/lib/api.ts. Auth via Zustand em @/stores/auth-store.ts.
-
-Corrija o bug identificado abaixo.
-
-BUG LOCALIZADO:
-Arquivo: ${analysis.file}
-Linha: ${analysis.line}
-Causa raiz: ${analysis.rootCause}
-
-RELATO ORIGINAL:
-${data.description}
-
-REGRAS OBRIGATÓRIAS:
-1. Corrija APENAS o bug identificado — não refatore nada além do necessário
-2. Respeite os padrões do projeto: imports com @/, shadcn/ui, TypeORM repositories, NestJS DI
-3. Se o bug for no frontend, mantenha compatibilidade com i18next (chaves de tradução existentes)
-4. Não faça push nem commit — apenas edite os arquivos
-5. Se alterar queries TypeORM, garanta que os relations e joins estão corretos
-6. Prefira soluções já existentes no código — não reinvente
-
-Responda SOMENTE com JSON válido após aplicar o fix:
-{
-  "summary": "fix(${data.service}): descrição curta em até 72 chars",
-  "explanation": "explicação detalhada do que foi corrigido e por quê"
-}
-    `.trim();
   }
 
   private extractJson(output: string): any {
@@ -310,9 +246,7 @@ Responda SOMENTE com JSON válido após aplicar o fix:
 
     const match = clean.match(/\{[\s\S]*\}/);
     if (!match) {
-      throw new Error(
-        `Claude não retornou JSON válido.\nOutput: ${output.slice(0, 300)}`,
-      );
+      throw new Error(`Codex não retornou JSON válido.\nOutput: ${output.slice(0, 300)}`);
     }
 
     return JSON.parse(match[0]);

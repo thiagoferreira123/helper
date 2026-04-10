@@ -1,7 +1,7 @@
 {
   "name": "bug-agent",
   "version": "1.0.0",
-  "description": "Agente autônomo de correção de bugs com Claude Code",
+  "description": "Agente autônomo de correção de bugs com OpenAI Codex",
   "private": true,
   "scripts": {
     "build": "nest build",

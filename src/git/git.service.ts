@@ -22,6 +22,8 @@ export class GitService {
   }
 
   async createBranch(repoPath: string, name: string): Promise<void> {
+    // Remove branch local se já existir (retry de job anterior)
+    try { this.run(`git branch -D ${name}`, repoPath); } catch {}
     this.run(`git checkout -b ${name}`, repoPath);
   }
 

@@ -8,14 +8,8 @@ if [ -z "$GITHUB_TOKEN" ]; then
   exit 1
 fi
 
-# Configurar credenciais do Claude Code a partir de env var
-if [ -n "$CLAUDE_CREDENTIALS" ]; then
-  mkdir -p "$HOME/.claude"
-  echo "$CLAUDE_CREDENTIALS" > "$HOME/.claude/.credentials.json"
-  echo '{}' > "$HOME/.claude/settings.json" 2>/dev/null || true
-  echo "Claude Code: credenciais configuradas"
-else
-  echo "AVISO: CLAUDE_CREDENTIALS não configurado — agente não poderá analisar bugs"
+if [ -z "$OPENAI_API_KEY" ]; then
+  echo "AVISO: OPENAI_API_KEY não configurado — agente não poderá analisar bugs"
 fi
 
 REPO_URL="https://${GITHUB_TOKEN}@github.com/thiagoferreira123"

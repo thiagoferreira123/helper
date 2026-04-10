@@ -29,60 +29,38 @@ export class BugProcessor extends WorkerHost {
     };
 
     try {
-      // 1. Preparar workspace
+      // Preparar workspace + branch
       log(`Preparando workspace (${repoName})...`);
       await job.updateProgress(5);
       await this.git.fetchAndReset(repoPath);
 
-      // 2. Criar branch isolada
       const branch = `fix/agent-${job.id}`;
       log(`Criando branch ${branch}`);
-      await job.updateProgress(10);
       await this.git.createBranch(repoPath, branch);
+      await job.updateProgress(10);
 
-      // 3. Análise
-      log('Analisando bug com Claude Code...');
-      await job.updateProgress(20);
-      const analysis = await this.agent.analyze(data, log);
-      log(`Bug localizado: ${analysis.file}:${analysis.line} (${analysis.confidence}%)`);
+      // Etapa 1: Pesquisador — entende o problema, pesquisa web/docs
+      log('Pesquisando bug (web, docs, código)...');
+      const research = await this.agent.research(data, log);
+      log(`Causa raiz: ${research.rootCause}`);
+      log(`Arquivos: ${research.files.join(', ')}`);
       await job.updateProgress(40);
 
-      // 4. Correção
-      log('Aplicando correção...');
-      const fix = await this.agent.applyFix(analysis, data, log);
+      // Etapa 2: Especialista — corrige o código e roda testes
+      log('Especialista aplicando correção + testes...');
+      const fix = await this.agent.fix(research, data, log);
       log(`Fix: ${fix.summary}`);
-      await job.updateProgress(60);
+      await job.updateProgress(80);
 
-      // 5. Testes
-      log('Rodando testes...');
-      let testResult = await this.agent.runTests(repoPath, log);
-      await job.updateProgress(75);
-
-      if (!testResult.passed) {
-        log(`${testResult.failures} teste(s) falharam. Corrigindo...`);
-        await this.agent.fixFailingTests(testResult, repoPath, log);
-        testResult = await this.agent.runTests(repoPath, log);
-        if (!testResult.passed) {
-          throw new Error(`Testes continuam falhando. Falhas: ${testResult.failures}`);
-        }
-        log('Testes corrigidos.');
-      } else {
-        log('Todos os testes passaram.');
-      }
-      await job.updateProgress(85);
-
-      // 6. Commit e push
+      // Commit e push
       log('Commit e push...');
       await this.git.commitAndPush(repoPath, branch, fix.summary);
       await job.updateProgress(90);
 
       if (target === 'homologacao') {
-        // Homologação: merge direto na branch homologacao
         log('Mergeando direto em homologacao...');
         await this.git.mergeIntoBranch(repoPath, branch, 'homologacao');
-        await job.updateProgress(95);
 
-        // Notificar Discord
         log('Notificando Discord...');
         await this.github.notifyDiscord({
           prUrl: '',
@@ -92,7 +70,7 @@ export class BugProcessor extends WorkerHost {
           severity: data.severity,
           reportedBy: data.reportedBy,
           target: 'homologacao',
-          analysis: { file: analysis.file, line: analysis.line, rootCause: analysis.rootCause, confidence: analysis.confidence },
+          analysis: { file: research.files[0] || '', line: 0, rootCause: research.rootCause, confidence: 0 },
           explanation: fix.explanation,
         });
         await job.updateProgress(100);
@@ -101,7 +79,7 @@ export class BugProcessor extends WorkerHost {
         return { summary: fix.summary, target: 'homologacao' };
       }
 
-      // Main: abrir PR + notificar Discord
+      // Main: abrir PR
       log('Abrindo Pull Request na main...');
       const prBody = [
         `## Bug Report`,
@@ -111,13 +89,14 @@ export class BugProcessor extends WorkerHost {
         `- **Reportado por:** ${data.reportedBy}`,
         `- **Descrição:** ${data.description}`,
         '',
+        `## Pesquisa`,
+        `- **Arquivos:** ${research.files.map(f => `\`${f}\``).join(', ')}`,
+        `- **Causa raiz:** ${research.rootCause}`,
+        `- **Abordagem:** ${research.suggestedApproach}`,
+        research.references.length ? `- **Refs:** ${research.references.join(', ')}` : '',
+        '',
         `## Correção`,
         fix.explanation,
-        '',
-        `## Análise`,
-        `- **Arquivo:** \`${analysis.file}:${analysis.line}\``,
-        `- **Causa raiz:** ${analysis.rootCause}`,
-        `- **Confiança:** ${analysis.confidence}%`,
         '',
         `> Correção automática pelo Bug Agent (job #${job.id})`,
       ].join('\n');
@@ -128,9 +107,7 @@ export class BugProcessor extends WorkerHost {
         title: fix.summary,
         body: prBody,
       });
-      await job.updateProgress(95);
 
-      // Notificar Discord
       log('Notificando Discord...');
       await this.github.notifyDiscord({
         prUrl,
@@ -140,7 +117,7 @@ export class BugProcessor extends WorkerHost {
         severity: data.severity,
         reportedBy: data.reportedBy,
         target: 'main',
-        analysis: { file: analysis.file, line: analysis.line, rootCause: analysis.rootCause, confidence: analysis.confidence },
+        analysis: { file: research.files[0] || '', line: 0, rootCause: research.rootCause, confidence: 0 },
         explanation: fix.explanation,
       });
       await job.updateProgress(100);

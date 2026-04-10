@@ -13,8 +13,8 @@ FROM node:20-slim
 
 RUN apt-get update && apt-get install -y git curl openssh-client && rm -rf /var/lib/apt/lists/*
 
-# Instalar Claude Code CLI globalmente
-RUN npm install -g @anthropic-ai/claude-code
+# Instalar Codex CLI globalmente
+RUN npm install -g @openai/codex
 
 WORKDIR /app
 
@@ -25,10 +25,10 @@ COPY --from=builder /app/dist ./dist
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
-# Criar user não-root (claude --dangerously-skip-permissions rejeita root)
+# Criar user não-root
 RUN useradd -m -s /bin/bash agent \
- && mkdir -p /repos /home/agent/.claude \
- && chown -R agent:agent /repos /home/agent/.claude /app
+ && mkdir -p /repos \
+ && chown -R agent:agent /repos /app
 
 # Git config para o user agent
 USER agent

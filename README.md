@@ -15,7 +15,7 @@ Worker consome 1 job por vez
         ↓
 Agentes paralelos analisam (Vision + Codebase + Logs)
         ↓
-Claude Code aplica o fix no repo clonado na VPS
+Codex aplica o fix no repo clonado na VPS
         ↓
 Testes rodam — se falhar, tenta corrigir automaticamente
         ↓
@@ -47,12 +47,7 @@ bug-agent/
 │   │
 │   ├── agent/
 │   │   ├── agent.module.ts
-│   │   ├── agent.service.ts         # analyze(), applyFix(), runTests()
-│   │   ├── prompt.builder.ts        # monta o prompt para o Claude Code
-│   │   └── agents/
-│   │       ├── vision.agent.ts      # analisa o print via Claude Vision
-│   │       ├── codebase.agent.ts    # busca semântica no repo (embeddings)
-│   │       └── reviewer.agent.ts    # valida o fix antes do push
+│   │   └── agent.service.ts         # analyze(), applyFix(), runTests()
 │   │
 │   ├── git/
 │   │   ├── git.service.ts           # fetchAndReset, createBranch, commitAndPush, mergeToHomologacao
@@ -64,9 +59,6 @@ bug-agent/
 ├── frontend/
 │   ├── BugReportModal.tsx           # componente React — cola no seu projeto
 │   └── useJobStatus.tsx             # hook de polling do status do job
-│
-├── deploy/
-│   └── bug-agent.service            # unit file do systemd
 │
 ├── .env.example                     # todas as variáveis necessárias
 ├── package.json
@@ -81,7 +73,8 @@ bug-agent/
 - Node.js 20+
 - Redis 7+
 - Git configurado com acesso de leitura/escrita ao repositório do produto
-- Claude Code CLI autenticado (ver seção de login abaixo)
+- Codex CLI instalado (`npm install -g @openai/codex`)
+- `OPENAI_API_KEY` configurado no `.env`
 - Usuário `deploy` com permissão de escrita em `/opt/repos/`
 
 ---
@@ -121,16 +114,11 @@ git checkout homologacao
 
 > O agente sempre trabalha neste diretório. Nunca aponta para o repo em produção.
 
-### 4. Login no Claude Code
+### 4. Instalar Codex CLI
 
 ```bash
-cd /opt/bug-agent
-npx claude login
-# Abre o browser — faça login com seu e-mail Anthropic
-# A chave é salva em ~/.config/claude e reutilizada automaticamente
+npm install -g @openai/codex
 ```
-
-Após o login, a `ANTHROPIC_API_KEY` é gerenciada pelo CLI. Você pode também setá-la manualmente no `.env` se preferir.
 
 ### 5. Configurar variáveis de ambiente
 
@@ -143,14 +131,12 @@ Preencha obrigatoriamente:
 
 | Variável | Como obter |
 |---|---|
+| `OPENAI_API_KEY` | platform.openai.com → API keys |
 | `GITHUB_TOKEN` | github.com → Settings → Developer settings → Personal access tokens → permissões: `repo` |
 | `GITHUB_OWNER` | nome da organização ou usuário no GitHub |
 | `GITHUB_REPO` | nome do repositório do produto |
 | `REPO_PATH` | `/opt/repos/seu-produto` |
-| `DASHBOARD_PASSWORD` | qualquer senha forte |
 | `FRONTEND_URL` | URL do seu frontend (ex: `https://app.suaempresa.com`) |
-
-As variáveis de Slack são opcionais — só precisam se for usar o intake via Slack além do formulário.
 
 ### 6. Instalar como serviço systemd
 
@@ -278,17 +264,6 @@ Estados possíveis: `waiting` | `active` | `completed` | `failed` | `delayed`
 
 ---
 
-## Dashboard de jobs
-
-Disponível em `http://ip-da-vps:3001/admin/queues` com autenticação básica.
-
-Usuário: valor de `DASHBOARD_USER` no `.env` (padrão: `admin`)
-Senha: valor de `DASHBOARD_PASSWORD` no `.env`
-
-Mostra todos os jobs com status, logs em tempo real, histórico de falhas e opção de reprocessar.
-
----
-
 ## Fluxo de git na VPS
 
 O agente opera exclusivamente no diretório `REPO_PATH`. A sequência para cada job é:
@@ -318,7 +293,7 @@ Cada job tem 3 tentativas com backoff exponencial:
 
 - 1ª falha → aguarda 30s → tenta novamente
 - 2ª falha → aguarda 60s → tenta novamente
-- 3ª falha → marca como `failed`, notifica (se Slack configurado)
+- 3ª falha → marca como `failed`, notifica (se Discord configurado)
 
 Jobs em `failed` ficam visíveis no dashboard e podem ser reprocessados manualmente.
 
@@ -363,24 +338,6 @@ cd /opt/repos/seu-produto
 git fetch origin
 git reset --hard origin/homologacao
 ```
-
----
-
-## O que falta implementar
-
-Os arquivos abaixo estão referenciados no código mas precisam ser escritos:
-
-| Arquivo | Responsabilidade |
-|---|---|
-| `src/agent/agent.service.ts` | Spawna o Claude Code CLI, passa o prompt, streama os logs de volta para o job |
-| `src/agent/prompt.builder.ts` | Monta o prompt estruturado com contexto do bug, serviço e histórico |
-| `src/agent/agents/vision.agent.ts` | Envia o print para a API de vision do Claude e extrai contexto da UI |
-| `src/agent/agents/codebase.agent.ts` | Indexa o repo com embeddings, faz busca semântica para localizar o bug |
-| `src/agent/agents/reviewer.agent.ts` | Valida o diff gerado antes do commit (lint, tipos, segurança) |
-| `src/git/git.service.ts` | Wrapper sobre `simple-git` com todos os métodos usados no processor |
-| `src/git/github.service.ts` | Abre PR via Octokit com o template de body já montado |
-| `src/dashboard/dashboard.module.ts` | Registra o Bull Board com autenticação básica |
-| `deploy/bug-agent.service` | Unit file do systemd com `EnvironmentFile`, `Restart=always` e `User=deploy` |
 
 ---
 
