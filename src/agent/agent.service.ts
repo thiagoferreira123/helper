@@ -5,6 +5,7 @@ import {
   writeFileSync,
   readdirSync,
   existsSync,
+  statSync,
 } from 'fs';
 import { join, relative } from 'path';
 import { BugJobData } from '../queue/queue.service';
@@ -60,7 +61,10 @@ export class AgentService {
     return FRONTEND_FEATURES.has(service) ? this.frontRepoPath : this.backRepoPath;
   }
 
-  /** Etapa 1: Pesquisador — lê arquivos da feature e analisa com IA */
+  // ═══════════════════════════════════════════════════════════════════════
+  // ETAPA 1: TRIAGEM — IA vê nomes dos arquivos e escolhe quais ler
+  // ═══════════════════════════════════════════════════════════════════════
+
   async research(
     data: BugJobData,
     onLog: (log: string) => void,
@@ -68,17 +72,32 @@ export class AgentService {
     const repoPath = this.getRepoPath(data.service);
     const isFrontend = FRONTEND_FEATURES.has(data.service);
 
-    onLog('Lendo arquivos da feature...');
-    const fileContents = this.readFeatureFiles(repoPath, data.service);
-    onLog(`${fileContents.size} arquivos lidos`);
+    // Passo 1: Listar arquivos (só nomes + tamanho)
+    onLog('Listando arquivos da feature...');
+    const fileList = this.listFeatureFiles(repoPath, data.service);
+    onLog(`${fileList.length} arquivos encontrados`);
 
-    const prompt = this.buildResearchPrompt(data, isFrontend, fileContents);
-    onLog(`Consultando GPT-5.4 (pesquisa, ${prompt.length} chars)...`);
-    const output = await this.callOpenAI(prompt, data);
-    return this.extractJson(output);
+    // Passo 2: IA escolhe quais arquivos ler (máx 8)
+    onLog('Triagem: IA escolhendo arquivos relevantes...');
+    const triagePrompt = this.buildTriagePrompt(data, isFrontend, fileList);
+    const triageOutput = await this.callOpenAI(triagePrompt, data);
+    const triage = this.extractJson(triageOutput);
+    const filesToRead: string[] = (triage.files || []).slice(0, 10);
+    onLog(`Triagem: ${filesToRead.length} arquivos selecionados: ${filesToRead.join(', ')}`);
+
+    // Passo 3: Ler arquivos selecionados e analisar a fundo
+    onLog('Pesquisa profunda nos arquivos selecionados...');
+    const fileContents = this.readSpecificFiles(repoPath, filesToRead);
+    const researchPrompt = this.buildResearchPrompt(data, isFrontend, fileContents);
+    onLog(`Consultando GPT-5.4 (pesquisa, ${researchPrompt.length} chars)...`);
+    const researchOutput = await this.callOpenAI(researchPrompt, data);
+    return this.extractJson(researchOutput);
   }
 
-  /** Etapa 2: Especialista — corrige o bug via edits retornados pela IA */
+  // ═══════════════════════════════════════════════════════════════════════
+  // ETAPA 2: CORREÇÃO — edits cirúrgicos nos arquivos identificados
+  // ═══════════════════════════════════════════════════════════════════════
+
   async fix(
     research: ResearchResult,
     data: BugJobData,
@@ -87,8 +106,7 @@ export class AgentService {
     const repoPath = this.getRepoPath(data.service);
     const isFrontend = FRONTEND_FEATURES.has(data.service);
 
-    // Ler arquivos identificados pela pesquisa
-    onLog('Lendo arquivos identificados...');
+    onLog('Lendo arquivos para correção...');
     const fileContents = this.readSpecificFiles(repoPath, research.files);
 
     const prompt = this.buildFixPrompt(research, data, isFrontend, fileContents);
@@ -96,7 +114,8 @@ export class AgentService {
     const output = await this.callOpenAI(prompt, null);
     const result = this.extractJson(output);
 
-    // Aplicar edits no sistema de arquivos
+    // Aplicar edits
+    let editCount = 0;
     if (result.edits && Array.isArray(result.edits)) {
       for (const edit of result.edits as FileEdit[]) {
         const filePath = join(repoPath, edit.file);
@@ -106,13 +125,18 @@ export class AgentService {
         }
         let content = readFileSync(filePath, 'utf-8');
         if (!content.includes(edit.search)) {
-          onLog(`AVISO: trecho não encontrado em ${edit.file}`);
+          onLog(`AVISO: trecho não encontrado em ${edit.file} (${edit.search.slice(0, 60)}...)`);
           continue;
         }
         content = content.replace(edit.search, edit.replace);
         writeFileSync(filePath, content);
+        editCount++;
         onLog(`Editado: ${edit.file}`);
       }
+    }
+
+    if (editCount === 0) {
+      throw new Error('Nenhum edit foi aplicado — a IA não gerou edits válidos');
     }
 
     return { summary: result.summary, explanation: result.explanation };
@@ -129,7 +153,6 @@ export class AgentService {
 
     const content: any[] = [];
 
-    // Imagem (screenshot do bug)
     if (data?.imageBase64) {
       content.push({
         type: 'input_image',
@@ -139,11 +162,6 @@ export class AgentService {
 
     content.push({ type: 'input_text', text: prompt });
 
-    const body = {
-      model: 'gpt-5.4',
-      input: [{ role: 'user', content }],
-    };
-
     this.logger.debug(`Chamando OpenAI API (${prompt.length} chars, imagem: ${!!data?.imageBase64})`);
 
     const res = await fetch('https://api.openai.com/v1/responses', {
@@ -152,7 +170,10 @@ export class AgentService {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        input: [{ role: 'user', content }],
+      }),
     });
 
     if (!res.ok) {
@@ -163,9 +184,7 @@ export class AgentService {
     const json = await res.json();
     const text = json.output?.[0]?.content?.[0]?.text;
     if (!text) {
-      throw new Error(
-        `OpenAI retornou resposta vazia: ${JSON.stringify(json).slice(0, 500)}`,
-      );
+      throw new Error(`OpenAI retornou resposta vazia: ${JSON.stringify(json).slice(0, 500)}`);
     }
 
     this.logger.debug(`OpenAI respondeu (${text.length} chars)`);
@@ -174,92 +193,79 @@ export class AgentService {
 
   // ─── Leitura de arquivos ──────────────────────────────────────────────
 
-  /** Lê todos os arquivos .ts/.tsx da feature + arquivos compartilhados */
-  private readFeatureFiles(
-    repoPath: string,
-    service: string,
-  ): Map<string, string> {
-    const files = new Map<string, string>();
-
-    // Feature dir
+  /** Lista nomes + tamanho dos arquivos da feature (sem conteúdo) */
+  private listFeatureFiles(repoPath: string, service: string): string[] {
+    const files: string[] = [];
     const featureDir = join(repoPath, `src/features/${service}`);
-    this.walkDir(featureDir, repoPath, files, 30);
+    this.walkDirNames(featureDir, repoPath, files, 80);
 
-    // Arquivos compartilhados importantes
-    const sharedFiles = [
+    // Adicionar arquivos compartilhados comuns
+    const shared = [
       'src/lib/api.ts',
       'src/lib/utils.ts',
       'src/stores/auth-store.ts',
+      'src/hooks/',
+      'src/components/ui/',
     ];
-    for (const f of sharedFiles) {
-      const full = join(repoPath, f);
+    for (const s of shared) {
+      const full = join(repoPath, s);
       if (existsSync(full)) {
-        try {
-          const content = readFileSync(full, 'utf-8');
-          if (content.length < 20_000) files.set(f, content);
-        } catch {}
-      }
-    }
-
-    return files;
-  }
-
-  /** Lê arquivos específicos por caminho relativo */
-  private readSpecificFiles(
-    repoPath: string,
-    filePaths: string[],
-  ): Map<string, string> {
-    const files = new Map<string, string>();
-    for (const f of filePaths) {
-      const full = join(repoPath, f);
-      if (existsSync(full)) {
-        try {
-          const content = readFileSync(full, 'utf-8');
-          files.set(f, content);
-        } catch {}
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          this.walkDirNames(full, repoPath, files, 80);
+        } else {
+          const rel = relative(repoPath, full).replace(/\\/g, '/');
+          const size = Math.round(stat.size / 1024);
+          files.push(`${rel} (${size}kb)`);
+        }
       }
     }
     return files;
   }
 
-  /** Lê arquivos .ts/.tsx recursivamente de um diretório */
-  private walkDir(
+  /** Coleta nomes de arquivos recursivamente */
+  private walkDirNames(
     dir: string,
     repoPath: string,
-    files: Map<string, string>,
+    files: string[],
     maxFiles: number,
     depth = 0,
   ): void {
-    if (depth > 5 || files.size >= maxFiles || !existsSync(dir)) return;
+    if (depth > 5 || files.length >= maxFiles || !existsSync(dir)) return;
     let entries: any[];
     try {
       entries = readdirSync(dir, { withFileTypes: true }) as any[];
-    } catch {
-      return;
-    }
+    } catch { return; }
     for (const entry of entries) {
-      if (files.size >= maxFiles) break;
+      if (files.length >= maxFiles) break;
       const full = join(dir, entry.name);
-      if (
-        entry.isDirectory() &&
-        !entry.name.startsWith('.') &&
-        entry.name !== 'node_modules' &&
-        entry.name !== 'dist'
-      ) {
-        this.walkDir(full, repoPath, files, maxFiles, depth + 1);
-      } else if (
-        entry.isFile() &&
-        /\.(ts|tsx|js|jsx)$/.test(entry.name)
-      ) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules' && entry.name !== 'dist') {
+        this.walkDirNames(full, repoPath, files, maxFiles, depth + 1);
+      } else if (entry.isFile() && /\.(ts|tsx|js|jsx)$/.test(entry.name)) {
+        const rel = relative(repoPath, full).replace(/\\/g, '/');
         try {
-          const content = readFileSync(full, 'utf-8');
-          if (content.length < 20_000) {
-            const rel = relative(repoPath, full).replace(/\\/g, '/');
-            files.set(rel, content);
-          }
+          const size = Math.round(statSync(full).size / 1024);
+          files.push(`${rel} (${size}kb)`);
         } catch {}
       }
     }
+  }
+
+  /** Lê arquivos específicos por caminho relativo */
+  private readSpecificFiles(repoPath: string, filePaths: string[]): Map<string, string> {
+    const files = new Map<string, string>();
+    for (const f of filePaths) {
+      // Remove sufixo de tamanho se presente (ex: "path.ts (5kb)" → "path.ts")
+      const cleanPath = f.replace(/\s*\(\d+kb\)$/, '');
+      const full = join(repoPath, cleanPath);
+      if (existsSync(full)) {
+        try {
+          const content = readFileSync(full, 'utf-8');
+          files.set(cleanPath, content);
+        } catch {}
+      }
+    }
+    return files;
   }
 
   /** Formata Map de arquivos para incluir no prompt */
@@ -274,6 +280,47 @@ export class AgentService {
 
   // ─── Prompts ──────────────────────────────────────────────────────────
 
+  private buildTriagePrompt(
+    data: BugJobData,
+    isFrontend: boolean,
+    fileList: string[],
+  ): string {
+    const stack = isFrontend
+      ? `React 19, Vite 7, TanStack Router/Query, Zustand, shadcn/ui, Tailwind CSS 4, i18next, Vitest.
+Estrutura: src/features/<nome>/ com componentes, hooks, api/, data/ (schemas, types).`
+      : `NestJS 11, TypeORM 0.3, MySQL, BullMQ, Valkey/Redis, Jest.`;
+
+    const featureMap = isFrontend ? getFeatureMapText(data.service) : '';
+
+    return `
+Você é um triador de bugs. Sua ÚNICA tarefa é escolher quais arquivos um pesquisador deve ler para investigar este bug.
+
+STACK: ${stack}
+${featureMap ? `\nMAPA: ${featureMap}\n` : ''}
+BUG REPORTADO:
+Feature: ${data.service}
+Severidade: ${data.severity}
+Reportado por: ${data.reportedBy}
+Descrição: ${data.description}
+
+ARQUIVOS DISPONÍVEIS:
+${fileList.join('\n')}
+
+REGRAS:
+- Escolha entre 3 e 8 arquivos que são MAIS RELEVANTES para este bug específico
+- Priorize: componentes de formulário/edição, hooks de mutação, schemas, tipos, API calls
+- NÃO escolha arquivos de listagem/tabela se o bug é sobre edição/salvamento
+- NÃO escolha arquivos de UI pura (ícones, badges) se o bug é de lógica
+- Pense: "onde está o código que EXECUTA a ação que está falhando?"
+
+Responda SOMENTE com JSON válido:
+{
+  "files": ["caminho/completo/arquivo1.ts", "caminho/completo/arquivo2.tsx"],
+  "reasoning": "por que esses arquivos são relevantes para este bug"
+}
+    `.trim();
+  }
+
   private buildResearchPrompt(
     data: BugJobData,
     isFrontend: boolean,
@@ -284,33 +331,36 @@ export class AgentService {
 O frontend é organizado por features em src/features/<nome>/. Cada feature tem seus componentes, hooks e services.`
       : `NestJS 11, TypeORM 0.3, MySQL, BullMQ, Valkey/Redis, Jest.`;
 
-    const featureMap = isFrontend ? getFeatureMapText(data.service) : '';
-
     return `
-Você é um pesquisador de bugs. Seu trabalho é ENTENDER o problema a fundo antes que um especialista corrija.
+Você é um pesquisador sênior de bugs. Analise o código abaixo e encontre a causa raiz EXATA do bug.
 
-STACK DO PROJETO:
-${stack}
+STACK DO PROJETO: ${stack}
 
-${featureMap ? `MAPA DO CÓDIGO:\n${featureMap}\n` : ''}BUG REPORTADO:
+BUG REPORTADO:
 Feature: ${data.service}
 Severidade: ${data.severity}
 Reportado por: ${data.reportedBy}
 Descrição: ${data.description}
 
-CÓDIGO DA FEATURE (leia com atenção):
+CÓDIGO (leia CADA LINHA com atenção):
 ${this.formatFiles(fileContents)}
 
-SUAS TAREFAS:
-1. Analise o código acima e identifique a causa raiz do bug reportado
-2. Liste os arquivos envolvidos com caminho relativo exato
-3. Sugira a abordagem de correção — mas NÃO corrija nada
+INSTRUÇÕES:
+1. Leia TODO o código acima linha por linha
+2. Trace o fluxo exato que o usuário percorre quando o bug acontece
+3. Identifique a LINHA EXATA e a CONDIÇÃO que causa o problema
+4. Não dê respostas genéricas — cite o código específico
 
-Responda SOMENTE com JSON válido, sem markdown:
+Na sua análise, OBRIGATORIAMENTE:
+- Cite trechos exatos do código que causam o bug (copie e cole)
+- Explique o fluxo: "quando o usuário faz X, a função Y na linha Z faz W, mas deveria fazer V"
+- Se o bug é sobre dados sendo perdidos, mostre ONDE os dados são sobrescritos/ignorados
+
+Responda SOMENTE com JSON válido:
 {
-  "files": ["caminho/relativo/arquivo1.ts", "caminho/relativo/arquivo2.ts"],
-  "rootCause": "descrição clara e detalhada da causa raiz",
-  "suggestedApproach": "como o bug deve ser corrigido, passo a passo",
+  "files": ["apenas os arquivos que REALMENTE precisam ser editados"],
+  "rootCause": "Causa raiz ESPECÍFICA com citação de código. Ex: 'Na linha X de arquivo.ts, o useEffect sobrescreve phone com defaultValues que não inclui o valor existente do paciente. Trecho: const defaults = { phone: \"\" } — deveria usar patient.phone'",
+  "suggestedApproach": "Passo a passo ESPECÍFICO da correção. Ex: '1. No arquivo X, mudar a linha Y de Z para W. 2. No arquivo A, adicionar campo B ao objeto C'",
   "references": []
 }
     `.trim();
@@ -329,39 +379,37 @@ Imports usam @/ como alias para src/. Componentes UI ficam em @/components/ui/ (
 Usa NestJS DI, TypeORM repositories, class-validator para DTOs, Guards para auth.`;
 
     return `
-Você é um especialista sênior em ${isFrontend ? 'React e frontend moderno' : 'NestJS e backend Node.js'}.
-Outro agente já pesquisou e diagnosticou o bug. Seu trabalho é definir as edições exatas para CORRIGIR o código.
+Você é um cirurgião de código. Aplique a correção MÍNIMA e PRECISA para resolver este bug.
 
-STACK DO PROJETO:
-${stack}
+STACK: ${stack}
 
-PESQUISA DO BUG:
-Arquivos envolvidos: ${research.files.join(', ')}
+DIAGNÓSTICO CONFIRMADO:
+Arquivos: ${research.files.join(', ')}
 Causa raiz: ${research.rootCause}
-Abordagem sugerida: ${research.suggestedApproach}
+Correção planejada: ${research.suggestedApproach}
 
-RELATO ORIGINAL:
-${data.description}
+RELATO DO USUÁRIO: ${data.description}
 
-CÓDIGO ATUAL DOS ARQUIVOS:
+CÓDIGO ATUAL:
 ${this.formatFiles(fileContents)}
 
-REGRAS OBRIGATÓRIAS:
-1. Corrija APENAS o bug identificado — não refatore nada além do necessário
-2. Respeite os padrões do projeto: ${isFrontend ? 'imports com @/, shadcn/ui, i18next' : 'TypeORM repositories, NestJS DI, class-validator'}
-3. Cada edit deve ter "search" com o trecho EXATO do código atual e "replace" com o código corrigido
-4. O "search" deve ser único no arquivo — inclua contexto suficiente para não ser ambíguo
-5. Prefira soluções já existentes no código — não reinvente
+REGRAS ABSOLUTAS:
+1. Corrija APENAS o que causa o bug — ZERO refatoração, ZERO mudanças cosméticas
+2. Cada "search" DEVE ser uma cópia EXATA de um trecho do código acima (copie e cole, incluindo espaços e quebras de linha)
+3. Cada "search" DEVE ser longo o suficiente para ser ÚNICO no arquivo (inclua 2-3 linhas de contexto acima e abaixo)
+4. Se o bug é sobre dados sendo perdidos, a correção deve PRESERVAR os dados existentes
+5. Não adicione features novas, não mude a UI, não adicione try/catch desnecessários
+6. Teste mentalmente: "depois desta edição, o fluxo descrito no bug ainda acontece?" — se sim, sua correção está errada
 
-Responda SOMENTE com JSON válido, sem markdown:
+Responda SOMENTE com JSON válido:
 {
-  "summary": "fix(${data.service}): descrição curta em até 72 chars",
-  "explanation": "explicação detalhada do que foi corrigido e por quê",
+  "summary": "fix(${data.service}): descrição curta e específica do que foi corrigido",
+  "explanation": "explicação técnica do que cada edit faz e por quê resolve o bug",
   "edits": [
     {
       "file": "caminho/relativo/arquivo.ts",
-      "search": "trecho exato do código atual que será substituído",
-      "replace": "código corrigido que substituirá o trecho"
+      "search": "cópia EXATA do trecho atual (múltiplas linhas, com contexto)",
+      "replace": "código corrigido"
     }
   ]
 }
@@ -378,9 +426,7 @@ Responda SOMENTE com JSON válido, sem markdown:
 
     const match = clean.match(/\{[\s\S]*\}/);
     if (!match) {
-      throw new Error(
-        `IA não retornou JSON válido.\nOutput: ${output.slice(0, 500)}`,
-      );
+      throw new Error(`IA não retornou JSON válido.\nOutput: ${output.slice(0, 500)}`);
     }
 
     return JSON.parse(match[0]);

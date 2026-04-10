@@ -39,15 +39,15 @@ export class BugProcessor extends WorkerHost {
       await this.git.createBranch(repoPath, branch);
       await job.updateProgress(10);
 
-      // Etapa 1: Pesquisador — entende o problema, pesquisa web/docs
-      log('Pesquisando bug (web, docs, código)...');
+      // Etapa 1: Triagem + Pesquisa profunda (3 chamadas IA)
+      log('Triagem e pesquisa profunda...');
       const research = await this.agent.research(data, log);
       log(`Causa raiz: ${research.rootCause}`);
-      log(`Arquivos: ${research.files.join(', ')}`);
-      await job.updateProgress(40);
+      log(`Arquivos a editar: ${research.files.join(', ')}`);
+      await job.updateProgress(50);
 
-      // Etapa 2: Especialista — corrige o código e roda testes
-      log('Especialista aplicando correção + testes...');
+      // Etapa 2: Correção cirúrgica
+      log('Aplicando correção cirúrgica...');
       const fix = await this.agent.fix(research, data, log);
       log(`Fix: ${fix.summary}`);
       await job.updateProgress(80);
