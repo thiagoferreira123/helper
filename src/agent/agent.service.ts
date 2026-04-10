@@ -183,12 +183,20 @@ export class AgentService {
     }
 
     const json = await res.json();
-    const text = json.output?.[0]?.content?.[0]?.text;
+
+    // gpt-5.4-pro retorna reasoning + message; gpt-5.4 retorna só message
+    let text: string | undefined;
+    for (const block of json.output || []) {
+      if (block.type === 'message' && block.content?.[0]?.text) {
+        text = block.content[0].text;
+        break;
+      }
+    }
     if (!text) {
       throw new Error(`OpenAI retornou resposta vazia: ${JSON.stringify(json).slice(0, 500)}`);
     }
 
-    this.logger.debug(`OpenAI respondeu (${text.length} chars)`);
+    this.logger.debug(`OpenAI respondeu (${model}, ${text.length} chars)`);
     return text;
   }
 
