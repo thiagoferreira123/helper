@@ -15,6 +15,10 @@ export class GitService {
   }
 
   async fetchAndReset(repoPath: string): Promise<void> {
+    // Aborta qualquer merge/rebase pendente antes de tudo
+    try { this.run('git merge --abort', repoPath); } catch {}
+    try { this.run('git rebase --abort', repoPath); } catch {}
+    this.run('git reset --hard', repoPath);
     this.run('git fetch origin', repoPath);
     this.run('git checkout main', repoPath);
     this.run('git reset --hard origin/main', repoPath);
@@ -35,15 +39,16 @@ export class GitService {
   }
 
   async mergeIntoBranch(repoPath: string, sourceBranch: string, targetBranch: string): Promise<void> {
-    // Garante que a branch alvo existe localmente
+    // Garante estado limpo e atualizado do target
+    this.run('git fetch origin', repoPath);
     try {
       this.run(`git checkout ${targetBranch}`, repoPath);
+      this.run(`git reset --hard origin/${targetBranch}`, repoPath);
     } catch {
-      // Se não existe, cria a partir de origin
+      // Se não existe localmente, cria a partir de origin ou main
       try {
         this.run(`git checkout -b ${targetBranch} origin/${targetBranch}`, repoPath);
       } catch {
-        // Se nem no origin existe, cria a partir de main
         this.run('git checkout main', repoPath);
         this.run(`git checkout -b ${targetBranch}`, repoPath);
       }
