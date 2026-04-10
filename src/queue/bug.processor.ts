@@ -22,7 +22,7 @@ export class BugProcessor extends WorkerHost {
     const data = job.data;
     const target = data.target || 'main';
     const repoPath = this.agent.getRepoPath(data.service);
-    const repoName = repoPath.includes('front-new') ? 'front-new' : 'back';
+    const repoName = repoPath.includes('front-new') ? 'frontend-v3' : 'back-dietsystem-v2-nestjs';
     const log = (msg: string) => {
       job.log(msg);
       this.logger.log(`[job ${job.id}] ${msg}`);
