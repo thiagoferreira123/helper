@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { BugJobData } from '../queue/queue.service';
 import { getFeatureMapText } from './feature-map';
@@ -97,10 +97,9 @@ Descrição: ${data.description}
 
 SUAS TAREFAS:
 1. Vá DIRETO aos arquivos indicados no mapa acima — não fique buscando pela codebase
-2. Pesquise na web por issues conhecidas, bugs similares na documentação oficial das libs envolvidas (${isFrontend ? 'React, TanStack Query, Zustand, shadcn/ui, Tailwind' : 'NestJS, TypeORM, BullMQ'})
-3. Consulte a documentação oficial para confirmar o uso correto das APIs envolvidas
-4. Identifique a causa raiz com clareza
-5. Sugira a abordagem de correção — mas NÃO corrija nada, NÃO edite nenhum arquivo
+2. Leia os arquivos relevantes e entenda o fluxo do código envolvido
+3. Identifique a causa raiz com clareza
+4. Sugira a abordagem de correção — mas NÃO corrija nada, NÃO edite nenhum arquivo
 
 Responda SOMENTE com JSON válido, sem markdown:
 {
@@ -163,31 +162,32 @@ Responda SOMENTE com JSON válido após aplicar o fix:
     onLog: (log: string) => void,
   ): Promise<string> {
     return new Promise((resolve, reject) => {
+      const tmpDir = `/tmp/bug-agent-${Date.now()}`;
+      mkdirSync(tmpDir, { recursive: true });
+      const outputFile = join(tmpDir, 'response.txt');
+
+      // Preparar imagem se houver
       let imagePath: string | null = null;
       if (data?.imageBase64) {
-        const tmpDir = `/tmp/bug-agent-${Date.now()}`;
-        mkdirSync(tmpDir, { recursive: true });
-        imagePath = join(
-          tmpDir,
-          `screenshot.${data.imageMimeType?.split('/')[1] ?? 'png'}`,
-        );
+        imagePath = join(tmpDir, `screenshot.${data.imageMimeType?.split('/')[1] ?? 'png'}`);
         writeFileSync(imagePath, Buffer.from(data.imageBase64, 'base64'));
-      }
-
-      let fullPrompt = prompt;
-      if (imagePath) {
-        fullPrompt += `\n\nScreenshot do bug salvo em: ${imagePath}\nUse a ferramenta Read para visualizar a imagem.`;
       }
 
       const args = [
         'exec',
         '--dangerously-bypass-approvals-and-sandbox',
-        '--model',
-        'gpt-5.4-medium',
-        fullPrompt,
+        '--model', 'gpt-5.4-medium',
+        '--output-last-message', outputFile,
       ];
 
-      this.logger.debug(`Spawning Codex: codex exec --dangerously-bypass-approvals-and-sandbox --model gpt-5.4-medium ...`);
+      if (imagePath) {
+        args.push('--image', imagePath);
+      }
+
+      // Prompt via stdin (usar '-' como placeholder) para evitar limite de argumento CLI
+      args.push('-');
+
+      this.logger.debug(`Spawning: codex exec ... --output-last-message (prompt via stdin, ${prompt.length} chars)`);
 
       const proc = spawn('codex', args, {
         cwd: repoPath,
@@ -199,37 +199,44 @@ Responda SOMENTE com JSON válido após aplicar o fix:
         },
       });
 
+      // Escrever prompt no stdin e fechar
+      proc.stdin.write(prompt);
       proc.stdin.end();
 
-      let output = '';
-      let errorOutput = '';
+      let stderrOutput = '';
 
       proc.stdout.on('data', (chunk) => {
-        const text = chunk.toString();
-        output += text;
-        onLog(text.slice(0, 300));
+        onLog(chunk.toString().slice(0, 300));
       });
 
       proc.stderr.on('data', (chunk) => {
-        errorOutput += chunk.toString();
+        stderrOutput += chunk.toString();
       });
 
       proc.on('close', (code) => {
-        if (imagePath) {
-          try { rmSync(imagePath, { force: true }); } catch {}
+        // Tentar ler output do arquivo (mais confiável que stdout)
+        let output = '';
+        try {
+          output = readFileSync(outputFile, 'utf-8');
+        } catch {
+          // Se não gerou arquivo, usa stderr como diagnóstico
         }
 
-        if (code === 0) {
+        // Limpar temp
+        try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+        if (code === 0 && output) {
           resolve(output);
         } else {
           reject(
-            new Error(`Codex saiu com código ${code}\nSTDERR: ${errorOutput.slice(0, 500)}`),
+            new Error(`Codex saiu com código ${code}\nSTDERR: ${stderrOutput.slice(0, 500)}\nOutput: ${output.slice(0, 300)}`),
           );
         }
       });
 
       const timeout = setTimeout(() => {
         proc.kill('SIGTERM');
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
         reject(new Error('Timeout: Codex demorou mais de 20 minutos'));
       }, 20 * 60 * 1000);
 
