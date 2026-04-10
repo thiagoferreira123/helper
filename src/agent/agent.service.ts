@@ -184,10 +184,7 @@ Responda SOMENTE com JSON válido após aplicar o fix:
         args.push('--image', imagePath);
       }
 
-      // Prompt via stdin (usar '-' como placeholder) para evitar limite de argumento CLI
-      args.push('-');
-
-      this.logger.debug(`Spawning: codex exec ... --output-last-message (prompt via stdin, ${prompt.length} chars)`);
+      this.logger.debug(`Spawning: codex ${args.join(' ')} (prompt via stdin, ${prompt.length} chars)`);
 
       const proc = spawn('codex', args, {
         cwd: repoPath,
@@ -210,7 +207,10 @@ Responda SOMENTE com JSON válido após aplicar o fix:
       });
 
       proc.stderr.on('data', (chunk) => {
-        stderrOutput += chunk.toString();
+        const text = chunk.toString();
+        stderrOutput += text;
+        // Logar stderr no job para diagnóstico
+        if (text.trim()) onLog(`[stderr] ${text.trim().slice(0, 500)}`);
       });
 
       proc.on('close', (code) => {
@@ -229,7 +229,7 @@ Responda SOMENTE com JSON válido após aplicar o fix:
           resolve(output);
         } else {
           reject(
-            new Error(`Codex saiu com código ${code}\nSTDERR: ${stderrOutput.slice(0, 500)}\nOutput: ${output.slice(0, 300)}`),
+            new Error(`Codex saiu com código ${code}\nSTDERR: ${stderrOutput.slice(0, 2000)}\nOutput: ${output.slice(0, 1000)}`),
           );
         }
       });
