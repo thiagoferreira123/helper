@@ -158,14 +158,13 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
       }
 
       const args = [
-        '--dangerously-skip-permissions',
-        '--no-interactive',
-        '--output-format',
-        'text',
-        '--max-turns',
-        '30',
         '-p',
         prompt,
+        '--dangerously-skip-permissions',
+        '--output-format',
+        'text',
+        '--max-budget-usd',
+        '5',
       ];
 
       if (imagePath) {
@@ -173,7 +172,7 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
       }
 
       this.logger.debug(
-        `Spawning Claude Code: claude ${args.slice(0, 3).join(' ')} ...`,
+        `Spawning Claude Code: claude -p ... --dangerously-skip-permissions`,
       );
 
       const proc = spawn('claude', args, {
@@ -183,7 +182,6 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
           NO_COLOR: '1',
           TERM: 'dumb',
         },
-        shell: true,
       });
 
       let output = '';
