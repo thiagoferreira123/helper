@@ -1,0 +1,36 @@
+[Unit]
+Description=Bug Agent — correção autônoma de bugs com Claude Code
+After=network.target redis.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/bug-agent
+
+# variáveis de ambiente — nunca commitar o .env
+EnvironmentFile=/opt/bug-agent/.env
+
+# NODE_PATH aponta para o node do usuário deploy (ajuste se usar nvm)
+Environment=PATH=/home/deploy/.nvm/versions/node/v20/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ExecStart=/home/deploy/.nvm/versions/node/v20/bin/node dist/main.js
+
+# reinicia sempre que o processo cair
+Restart=always
+RestartSec=10
+
+# desiste se cair 5 vezes em 2 minutos (evita loop infinito de crash)
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# logs vão para journald — acesse com: journalctl -u bug-agent -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bug-agent
+
+# aumenta o limite de arquivos abertos (repo grande + múltiplos streams)
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

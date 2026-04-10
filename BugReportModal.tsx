@@ -57,13 +57,72 @@ const SEVERITY_LABELS: Record<Severity, string> = {
   baixo: 'Baixo',
 }
 
-const SERVICES = [
-  'API Gateway',
-  'Auth Service',
-  'Payments Service',
-  'Notifications Service',
-  'Frontend',
-  'Outro',
+const FEATURES = [
+  // ── Dashboard / Pacientes ──
+  { value: 'dashboard', label: 'Dashboard' },
+  { value: 'patients', label: 'Pacientes (listagem)' },
+  { value: 'patients-overview', label: 'Pacientes (visão geral)' },
+  { value: 'patient', label: 'Ficha do Paciente' },
+  { value: 'patient-dashboard', label: 'Dashboard do Paciente' },
+  { value: 'patient-files', label: 'Arquivos do Paciente' },
+  { value: 'patient-report', label: 'Relatório do Paciente' },
+  { value: 'patient-public-registration', label: 'Cadastro Público de Paciente' },
+  // ── Nutrição / Plano Alimentar ──
+  { value: 'meal-plan-builder', label: 'Montador de Plano Alimentar' },
+  { value: 'meal-plan-builder-refactor', label: 'Montador de Plano (novo)' },
+  { value: 'plan-builder', label: 'Plan Builder' },
+  { value: 'templates', label: 'Templates' },
+  { value: 'recipes', label: 'Receitas' },
+  { value: 'nutritional-guidance', label: 'Orientação Nutricional' },
+  { value: 'food-diary-gallery', label: 'Diário Alimentar (galeria)' },
+  { value: 'manipulated-formula', label: 'Fórmula Manipulada' },
+  { value: 'products', label: 'Produtos' },
+  // ── Clínico ──
+  { value: 'anamnesis', label: 'Anamnese' },
+  { value: 'exams', label: 'Exames' },
+  { value: 'exam-analysis-ia', label: 'Análise de Exames (IA)' },
+  { value: 'medical-records', label: 'Prontuário' },
+  { value: 'body-scan', label: 'Body Scan' },
+  { value: 'comparative-photos', label: 'Fotos Comparativas' },
+  { value: 'weight-evolution', label: 'Evolução de Peso' },
+  { value: 'goals', label: 'Metas' },
+  // ── Antropometria ──
+  { value: 'anthropometry-adult', label: 'Antropometria Adulto' },
+  { value: 'anthropometry-pediatric', label: 'Antropometria Pediátrica' },
+  { value: 'anthropometry-pregnant', label: 'Antropometria Gestante' },
+  { value: 'anthropometry-bioimpedance', label: 'Bioimpedância' },
+  { value: 'caloric-expenditure', label: 'Gasto Calórico' },
+  // ── Agenda / Comunicação ──
+  { value: 'calendar', label: 'Agenda / Calendário' },
+  { value: 'scheduling', label: 'Agendamento Online' },
+  { value: 'chat', label: 'Chat' },
+  { value: 'chats', label: 'Conversas' },
+  { value: 'whatsapp-integration', label: 'Integração WhatsApp' },
+  { value: 'notifications', label: 'Notificações' },
+  // ── Financeiro ──
+  { value: 'billing', label: 'Assinatura / Billing' },
+  { value: 'checkout', label: 'Checkout' },
+  { value: 'financial-control', label: 'Controle Financeiro' },
+  { value: 'affiliate', label: 'Programa de Afiliados' },
+  // ── Admin / Config ──
+  { value: 'admin-panel', label: 'Painel Admin' },
+  { value: 'settings', label: 'Configurações' },
+  { value: 'users', label: 'Usuários' },
+  { value: 'form-builder', label: 'Construtor de Formulários' },
+  { value: 'apps', label: 'Apps / Integrações' },
+  // ── Conteúdo ──
+  { value: 'club', label: 'Club' },
+  { value: 'news', label: 'Novidades' },
+  { value: 'tutorials', label: 'Tutoriais' },
+  { value: 'shared-materials', label: 'Materiais Compartilhados' },
+  { value: 'insights', label: 'Insights' },
+  { value: 'tasks', label: 'Tarefas' },
+  // ── Outros ──
+  { value: 'auth', label: 'Login / Autenticação' },
+  { value: 'onboarding', label: 'Onboarding' },
+  { value: 'audio-transcription', label: 'Transcrição de Áudio' },
+  { value: 'document-verification', label: 'Verificação de Documentos' },
+  { value: 'outro', label: 'Outro' },
 ]
 
 // ─── componente principal ─────────────────────────────────────────────────────
@@ -183,16 +242,16 @@ export function BugReportModal({ currentUser, onClose }: BugReportModalProps) {
             </div>
           </div>
 
-          {/* serviço */}
+          {/* feature afetada */}
           <div>
-            <label className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">Serviço afetado</label>
+            <label className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">Feature afetada</label>
             <select
               value={service}
               onChange={(e) => setService(e.target.value)}
               className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             >
-              <option value="">Selecione o serviço...</option>
-              {SERVICES.map((s) => <option key={s}>{s}</option>)}
+              <option value="">Selecione a feature...</option>
+              {FEATURES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
           </div>
 
