@@ -10,9 +10,9 @@ fi
 
 # Configurar credenciais do Claude Code a partir de env var
 if [ -n "$CLAUDE_CREDENTIALS" ]; then
-  mkdir -p /root/.claude
-  echo "$CLAUDE_CREDENTIALS" > /root/.claude/.credentials.json
-  echo '{}' > /root/.claude/settings.json 2>/dev/null || true
+  mkdir -p "$HOME/.claude"
+  echo "$CLAUDE_CREDENTIALS" > "$HOME/.claude/.credentials.json"
+  echo '{}' > "$HOME/.claude/settings.json" 2>/dev/null || true
   echo "Claude Code: credenciais configuradas"
 else
   echo "AVISO: CLAUDE_CREDENTIALS não configurado — agente não poderá analisar bugs"
