@@ -157,19 +157,20 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
         writeFileSync(imagePath, Buffer.from(data.imageBase64, 'base64'));
       }
 
+      let fullPrompt = prompt;
+      if (imagePath) {
+        fullPrompt += `\n\nScreenshot do bug salvo em: ${imagePath}\nUse a ferramenta Read para visualizar a imagem.`;
+      }
+
       const args = [
         '-p',
-        prompt,
+        fullPrompt,
         '--dangerously-skip-permissions',
         '--output-format',
         'text',
         '--max-budget-usd',
         '5',
       ];
-
-      if (imagePath) {
-        args.push('--image', imagePath);
-      }
 
       this.logger.debug(
         `Spawning Claude Code: claude -p ... --dangerously-skip-permissions`,
