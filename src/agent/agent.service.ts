@@ -176,7 +176,7 @@ Responda SOMENTE com JSON válido após aplicar o fix:
       const args = [
         'exec',
         '--dangerously-bypass-approvals-and-sandbox',
-        '--model', 'gpt-5.4-medium',
+        '--model', 'gpt-5.4',
         '--output-last-message', outputFile,
       ];
 
