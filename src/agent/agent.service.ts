@@ -78,9 +78,9 @@ export class AgentService {
     onLog(`${fileList.length} arquivos encontrados`);
 
     // Passo 2: IA escolhe quais arquivos ler (máx 8)
-    onLog('Triagem: IA escolhendo arquivos relevantes...');
+    onLog('Triagem: IA escolhendo arquivos relevantes (gpt-5.4-pro)...');
     const triagePrompt = this.buildTriagePrompt(data, isFrontend, fileList);
-    const triageOutput = await this.callOpenAI(triagePrompt, data);
+    const triageOutput = await this.callOpenAI(triagePrompt, data, 'gpt-5.4-pro');
     const triage = this.extractJson(triageOutput);
     const filesToRead: string[] = (triage.files || []).slice(0, 10);
     onLog(`Triagem: ${filesToRead.length} arquivos selecionados: ${filesToRead.join(', ')}`);
@@ -89,8 +89,8 @@ export class AgentService {
     onLog('Pesquisa profunda nos arquivos selecionados...');
     const fileContents = this.readSpecificFiles(repoPath, filesToRead);
     const researchPrompt = this.buildResearchPrompt(data, isFrontend, fileContents);
-    onLog(`Consultando GPT-5.4 (pesquisa, ${researchPrompt.length} chars)...`);
-    const researchOutput = await this.callOpenAI(researchPrompt, data);
+    onLog(`Consultando gpt-5.4-pro (pesquisa, ${researchPrompt.length} chars)...`);
+    const researchOutput = await this.callOpenAI(researchPrompt, data, 'gpt-5.4-pro');
     return this.extractJson(researchOutput);
   }
 
@@ -147,6 +147,7 @@ export class AgentService {
   private async callOpenAI(
     prompt: string,
     data: BugJobData | null,
+    model: 'gpt-5.4' | 'gpt-5.4-pro' = 'gpt-5.4',
   ): Promise<string> {
     const apiKey = this.config.get<string>('OPENAI_API_KEY');
     if (!apiKey) throw new Error('OPENAI_API_KEY não configurada');
@@ -162,7 +163,7 @@ export class AgentService {
 
     content.push({ type: 'input_text', text: prompt });
 
-    this.logger.debug(`Chamando OpenAI API (${prompt.length} chars, imagem: ${!!data?.imageBase64})`);
+    this.logger.debug(`Chamando OpenAI API (${model}, ${prompt.length} chars, imagem: ${!!data?.imageBase64})`);
 
     const res = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -171,7 +172,7 @@ export class AgentService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5.4',
+        model,
         input: [{ role: 'user', content }],
       }),
     });
