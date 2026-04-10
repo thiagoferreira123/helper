@@ -180,15 +180,15 @@ Responda SOMENTE com JSON válido após aplicar o fix:
       }
 
       const args = [
-        '--quiet',
-        '--approval-mode',
-        'full-auto',
+        'exec',
+        '--dangerously-bypass-approvals-and-sandbox',
         '--model',
         'gpt-5.4-medium',
+        '--search',
         fullPrompt,
       ];
 
-      this.logger.debug(`Spawning Codex: codex --quiet --approval-mode full-auto --model gpt-5.4-medium ...`);
+      this.logger.debug(`Spawning Codex: codex exec --dangerously-bypass-approvals-and-sandbox --model gpt-5.4-medium ...`);
 
       const proc = spawn('codex', args, {
         cwd: repoPath,
