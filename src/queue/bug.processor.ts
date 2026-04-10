@@ -57,29 +57,13 @@ export class BugProcessor extends WorkerHost {
       await this.git.commitAndPush(repoPath, branch, fix.summary);
       await job.updateProgress(90);
 
+      // Homologacao: merge direto
       if (target === 'homologacao') {
         log('Mergeando direto em homologacao...');
         await this.git.mergeIntoBranch(repoPath, branch, 'homologacao');
-
-        log('Notificando Discord...');
-        await this.github.notifyDiscord({
-          prUrl: '',
-          title: fix.summary,
-          repo: repoName,
-          service: data.service,
-          severity: data.severity,
-          reportedBy: data.reportedBy,
-          target: 'homologacao',
-          analysis: { file: research.files[0] || '', line: 0, rootCause: research.rootCause, confidence: 0 },
-          explanation: fix.explanation,
-        });
-        await job.updateProgress(100);
-
-        log('Push direto em homologacao concluído.');
-        return { summary: fix.summary, target: 'homologacao' };
       }
 
-      // Main: abrir PR
+      // Sempre abre PR na main
       log('Abrindo Pull Request na main...');
       const prBody = [
         `## Bug Report`,
@@ -98,7 +82,7 @@ export class BugProcessor extends WorkerHost {
         `## Correção`,
         fix.explanation,
         '',
-        `> Correção automática pelo Bug Agent (job #${job.id})`,
+        target === 'homologacao' ? `> Já mergeado em homologacao. Correção automática pelo Bug Agent (job #${job.id})` : `> Correção automática pelo Bug Agent (job #${job.id})`,
       ].join('\n');
 
       const prUrl = await this.github.openPR({
@@ -116,14 +100,14 @@ export class BugProcessor extends WorkerHost {
         service: data.service,
         severity: data.severity,
         reportedBy: data.reportedBy,
-        target: 'main',
+        target,
         analysis: { file: research.files[0] || '', line: 0, rootCause: research.rootCause, confidence: 0 },
         explanation: fix.explanation,
       });
       await job.updateProgress(100);
 
       log(`PR aberta: ${prUrl}`);
-      return { prUrl, summary: fix.summary, target: 'main' };
+      return { prUrl, summary: fix.summary, target };
     } catch (err) {
       log(`ERRO: ${err.message}`);
       try { await this.git.fetchAndReset(repoPath); } catch {}
