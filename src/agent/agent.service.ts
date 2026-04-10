@@ -158,7 +158,6 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
       }
 
       const args = [
-        'claude',
         '--dangerously-skip-permissions',
         '--no-interactive',
         '--output-format',
@@ -174,10 +173,10 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
       }
 
       this.logger.debug(
-        `Spawning Claude Code: npx ${args.slice(0, 4).join(' ')} ...`,
+        `Spawning Claude Code: claude ${args.slice(0, 3).join(' ')} ...`,
       );
 
-      const proc = spawn('npx', args, {
+      const proc = spawn('claude', args, {
         cwd: repoPath,
         env: {
           ...process.env,

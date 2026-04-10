@@ -22,12 +22,15 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
+# Instalar Claude Code CLI globalmente
+RUN npm install -g @anthropic-ai/claude-code
+
 COPY --from=builder /app/dist ./dist
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
 # Diretório para os repos clonados (volume persistente)
-RUN mkdir -p /repos
+RUN mkdir -p /repos /root/.claude
 
 ENV NODE_ENV=production
 ENV PORT=3000
