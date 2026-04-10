@@ -53,7 +53,14 @@ export class GitService {
         this.run(`git checkout -b ${targetBranch}`, repoPath);
       }
     }
-    this.run(`git merge ${sourceBranch} --no-edit`, repoPath);
+    try {
+      this.run(`git merge ${sourceBranch} --no-edit`, repoPath);
+    } catch {
+      // Conflito: resolve a favor do fix branch
+      this.logger.warn(`Conflito no merge, resolvendo com -X theirs`);
+      this.run('git merge --abort', repoPath);
+      this.run(`git merge ${sourceBranch} --no-edit -X theirs`, repoPath);
+    }
     this.run(`git push origin ${targetBranch}`, repoPath);
     this.logger.log(`Branch ${sourceBranch} mergeada em ${targetBranch}`);
   }
