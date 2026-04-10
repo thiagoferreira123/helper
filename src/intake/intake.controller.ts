@@ -16,6 +16,7 @@ interface BugReportDto {
   reportedBy: string;
   imageBase64?: string;
   imageMimeType?: string;
+  target?: 'main' | 'homologacao';
 }
 
 @Controller('bugs')
@@ -41,6 +42,8 @@ export class IntakeController {
       throw new BadRequestException('severity inválido');
     }
 
+    const target = body.target === 'homologacao' ? 'homologacao' : 'main';
+
     const jobData: BugJobData = {
       description: body.description.trim(),
       severity: body.severity,
@@ -50,6 +53,7 @@ export class IntakeController {
       imageMimeType: body.imageMimeType,
       source: 'api',
       timestamp: Date.now(),
+      target,
     };
 
     const job = await this.queueService.enqueue(jobData);

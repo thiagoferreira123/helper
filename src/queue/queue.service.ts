@@ -11,6 +11,7 @@ export interface BugJobData {
   imageMimeType?: string;
   source: 'api' | 'slack';
   timestamp: number;
+  target?: 'main' | 'homologacao';
 }
 
 const PRIORITY_MAP: Record<string, number> = {

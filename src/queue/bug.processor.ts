@@ -20,6 +20,7 @@ export class BugProcessor extends WorkerHost {
 
   async process(job: Job<BugJobData>): Promise<any> {
     const data = job.data;
+    const target = data.target || 'main';
     const repoPath = this.agent.getRepoPath(data.service);
     const repoName = repoPath.includes('front-new') ? 'front-new' : 'back';
     const log = (msg: string) => {
@@ -75,35 +76,59 @@ export class BugProcessor extends WorkerHost {
       await this.git.commitAndPush(repoPath, branch, fix.summary);
       await job.updateProgress(90);
 
-      // 7. Abrir PR na main
-      log('Abrindo Pull Request...');
+      if (target === 'homologacao') {
+        // Homologação: merge direto na branch homologacao
+        log('Mergeando direto em homologacao...');
+        await this.git.mergeIntoBranch(repoPath, branch, 'homologacao');
+        await job.updateProgress(100);
+
+        log('Push direto em homologacao concluído.');
+        return { summary: fix.summary, target: 'homologacao' };
+      }
+
+      // Main: abrir PR + notificar Discord
+      log('Abrindo Pull Request na main...');
+      const prBody = [
+        `## Bug Report`,
+        `- **Feature:** ${data.service}`,
+        `- **Repo:** ${repoName}`,
+        `- **Severidade:** ${data.severity}`,
+        `- **Reportado por:** ${data.reportedBy}`,
+        `- **Descrição:** ${data.description}`,
+        '',
+        `## Correção`,
+        fix.explanation,
+        '',
+        `## Análise`,
+        `- **Arquivo:** \`${analysis.file}:${analysis.line}\``,
+        `- **Causa raiz:** ${analysis.rootCause}`,
+        `- **Confiança:** ${analysis.confidence}%`,
+        '',
+        `> Correção automática pelo Bug Agent (job #${job.id})`,
+      ].join('\n');
+
       const prUrl = await this.github.openPR({
         repo: repoName,
         branch,
         title: fix.summary,
-        body: [
-          `## Bug Report`,
-          `- **Feature:** ${data.service}`,
-          `- **Repo:** ${repoName}`,
-          `- **Severidade:** ${data.severity}`,
-          `- **Reportado por:** ${data.reportedBy}`,
-          `- **Descrição:** ${data.description}`,
-          '',
-          `## Correção`,
-          fix.explanation,
-          '',
-          `## Análise`,
-          `- **Arquivo:** \`${analysis.file}:${analysis.line}\``,
-          `- **Causa raiz:** ${analysis.rootCause}`,
-          `- **Confiança:** ${analysis.confidence}%`,
-          '',
-          `> Correção automática pelo Bug Agent (job #${job.id})`,
-        ].join('\n'),
+        body: prBody,
+      });
+      await job.updateProgress(95);
+
+      // Notificar Discord
+      log('Notificando Discord...');
+      await this.github.notifyDiscord({
+        prUrl,
+        title: fix.summary,
+        repo: repoName,
+        service: data.service,
+        severity: data.severity,
+        reportedBy: data.reportedBy,
       });
       await job.updateProgress(100);
 
       log(`PR aberta: ${prUrl}`);
-      return { prUrl, summary: fix.summary };
+      return { prUrl, summary: fix.summary, target: 'main' };
     } catch (err) {
       log(`ERRO: ${err.message}`);
       try { await this.git.fetchAndReset(repoPath); } catch {}

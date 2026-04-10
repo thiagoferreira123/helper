@@ -32,6 +32,25 @@ export class GitService {
     this.run(`git push origin ${branch}`, repoPath);
   }
 
+  async mergeIntoBranch(repoPath: string, sourceBranch: string, targetBranch: string): Promise<void> {
+    // Garante que a branch alvo existe localmente
+    try {
+      this.run(`git checkout ${targetBranch}`, repoPath);
+    } catch {
+      // Se não existe, cria a partir de origin
+      try {
+        this.run(`git checkout -b ${targetBranch} origin/${targetBranch}`, repoPath);
+      } catch {
+        // Se nem no origin existe, cria a partir de main
+        this.run('git checkout main', repoPath);
+        this.run(`git checkout -b ${targetBranch}`, repoPath);
+      }
+    }
+    this.run(`git merge ${sourceBranch} --no-edit`, repoPath);
+    this.run(`git push origin ${targetBranch}`, repoPath);
+    this.logger.log(`Branch ${sourceBranch} mergeada em ${targetBranch}`);
+  }
+
   async deleteBranch(repoPath: string, branch: string): Promise<void> {
     try { this.run(`git branch -d ${branch}`, repoPath); } catch {}
     try { this.run(`git push origin --delete ${branch}`, repoPath); } catch {}
