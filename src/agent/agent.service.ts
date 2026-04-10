@@ -184,7 +184,6 @@ Responda SOMENTE com JSON válido após aplicar o fix:
         '--dangerously-bypass-approvals-and-sandbox',
         '--model',
         'gpt-5.4-medium',
-        '--search',
         fullPrompt,
       ];
 
