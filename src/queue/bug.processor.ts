@@ -20,6 +20,8 @@ export class BugProcessor extends WorkerHost {
 
   async process(job: Job<BugJobData>): Promise<any> {
     const data = job.data;
+    const repoPath = this.agent.getRepoPath(data.service);
+    const repoName = repoPath.includes('front-new') ? 'front-new' : 'back';
     const log = (msg: string) => {
       job.log(msg);
       this.logger.log(`[job ${job.id}] ${msg}`);
@@ -27,71 +29,62 @@ export class BugProcessor extends WorkerHost {
 
     try {
       // 1. Preparar workspace
-      log('Preparando workspace...');
+      log(`Preparando workspace (${repoName})...`);
       await job.updateProgress(5);
-      await this.git.fetchAndReset();
+      await this.git.fetchAndReset(repoPath);
 
       // 2. Criar branch isolada
       const branch = `fix/agent-${job.id}`;
       log(`Criando branch ${branch}`);
       await job.updateProgress(10);
-      await this.git.createBranch(branch);
+      await this.git.createBranch(repoPath, branch);
 
-      // 3. Análise do bug
+      // 3. Análise
       log('Analisando bug com Claude Code...');
       await job.updateProgress(20);
       const analysis = await this.agent.analyze(data, log);
-      log(
-        `Bug localizado: ${analysis.file}:${analysis.line} (confiança ${analysis.confidence}%)`,
-      );
+      log(`Bug localizado: ${analysis.file}:${analysis.line} (${analysis.confidence}%)`);
       await job.updateProgress(40);
 
-      // 4. Aplicar correção
+      // 4. Correção
       log('Aplicando correção...');
       const fix = await this.agent.applyFix(analysis, data, log);
       log(`Fix: ${fix.summary}`);
       await job.updateProgress(60);
 
-      // 5. Rodar testes
+      // 5. Testes
       log('Rodando testes...');
-      let testResult = await this.agent.runTests(log);
+      let testResult = await this.agent.runTests(repoPath, log);
       await job.updateProgress(75);
 
-      // 5b. Se falhou, tenta corrigir
       if (!testResult.passed) {
-        log(
-          `${testResult.failures} teste(s) falharam. Tentando corrigir...`,
-        );
-        await this.agent.fixFailingTests(testResult, log);
-        testResult = await this.agent.runTests(log);
-
+        log(`${testResult.failures} teste(s) falharam. Corrigindo...`);
+        await this.agent.fixFailingTests(testResult, repoPath, log);
+        testResult = await this.agent.runTests(repoPath, log);
         if (!testResult.passed) {
-          throw new Error(
-            `Testes continuam falhando. Falhas: ${testResult.failures}`,
-          );
+          throw new Error(`Testes continuam falhando. Falhas: ${testResult.failures}`);
         }
-        log('Testes corrigidos com sucesso.');
+        log('Testes corrigidos.');
       } else {
         log('Todos os testes passaram.');
       }
       await job.updateProgress(85);
 
       // 6. Commit e push
-      log('Fazendo commit e push...');
-      await this.git.commitAndPush(branch, fix.summary);
+      log('Commit e push...');
+      await this.git.commitAndPush(repoPath, branch, fix.summary);
       await job.updateProgress(90);
 
-      // 7. Merge na homologacao e abrir PR
-      log('Fazendo merge na homologacao...');
-      await this.git.mergeToHomologacao(branch);
-
+      // 7. Abrir PR na main
       log('Abrindo Pull Request...');
       const prUrl = await this.github.openPR({
-        branch: 'homologacao',
+        repo: repoName,
+        branch,
         title: fix.summary,
         body: [
           `## Bug Report`,
           `- **Feature:** ${data.service}`,
+          `- **Repo:** ${repoName}`,
           `- **Severidade:** ${data.severity}`,
           `- **Reportado por:** ${data.reportedBy}`,
           `- **Descrição:** ${data.description}`,
@@ -109,16 +102,11 @@ export class BugProcessor extends WorkerHost {
       });
       await job.updateProgress(100);
 
-      // 8. Limpar branch temporária
-      await this.git.deleteBranch(branch);
-
       log(`PR aberta: ${prUrl}`);
       return { prUrl, summary: fix.summary };
     } catch (err) {
       log(`ERRO: ${err.message}`);
-      try {
-        await this.git.fetchAndReset();
-      } catch {}
+      try { await this.git.fetchAndReset(repoPath); } catch {}
       throw err;
     }
   }

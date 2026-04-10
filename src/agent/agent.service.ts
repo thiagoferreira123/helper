@@ -24,13 +24,37 @@ export interface TestResult {
   output: string;
 }
 
+// Features que existem no frontend — tudo que não estiver aqui vai para o backend
+const FRONTEND_FEATURES = new Set([
+  'dashboard', 'patients', 'patients-overview', 'patient', 'patient-dashboard',
+  'patient-files', 'patient-report', 'patient-public-registration',
+  'meal-plan-builder', 'meal-plan-builder-refactor', 'plan-builder', 'templates',
+  'recipes', 'nutritional-guidance', 'food-diary-gallery', 'manipulated-formula', 'products',
+  'anamnesis', 'exams', 'exam-analysis-ia', 'medical-records', 'body-scan',
+  'comparative-photos', 'weight-evolution', 'goals',
+  'anthropometry-adult', 'anthropometry-pediatric', 'anthropometry-pregnant',
+  'anthropometry-bioimpedance', 'caloric-expenditure',
+  'calendar', 'scheduling', 'chat', 'chats', 'whatsapp-integration', 'notifications',
+  'billing', 'checkout', 'financial-control', 'affiliate',
+  'admin-panel', 'settings', 'users', 'form-builder', 'apps',
+  'club', 'news', 'tutorials', 'shared-materials', 'insights', 'tasks',
+  'auth', 'onboarding', 'audio-transcription', 'document-verification',
+]);
+
 @Injectable()
 export class AgentService {
   private readonly logger = new Logger(AgentService.name);
-  private readonly repoPath: string;
+  private readonly frontRepoPath: string;
+  private readonly backRepoPath: string;
 
   constructor(private readonly config: ConfigService) {
-    this.repoPath = this.config.getOrThrow('REPO_PATH');
+    this.frontRepoPath = this.config.get('FRONT_REPO_PATH', '/repos/front-new');
+    this.backRepoPath = this.config.get('BACK_REPO_PATH', '/repos/back');
+  }
+
+  /** Retorna o repo correto baseado na feature reportada */
+  getRepoPath(service: string): string {
+    return FRONTEND_FEATURES.has(service) ? this.frontRepoPath : this.backRepoPath;
   }
 
   async analyze(
@@ -38,7 +62,8 @@ export class AgentService {
     onLog: (log: string) => void,
   ): Promise<AnalysisResult> {
     const prompt = this.buildAnalysisPrompt(data);
-    const output = await this.runClaude(prompt, data, onLog);
+    const repoPath = this.getRepoPath(data.service);
+    const output = await this.runClaude(prompt, data, repoPath, onLog);
     const json = this.extractJson(output);
     return {
       file: json.file,
@@ -54,7 +79,8 @@ export class AgentService {
     onLog: (log: string) => void,
   ): Promise<FixResult> {
     const prompt = this.buildFixPrompt(analysis, data);
-    const output = await this.runClaude(prompt, data, onLog);
+    const repoPath = this.getRepoPath(data.service);
+    const output = await this.runClaude(prompt, data, repoPath, onLog);
     const json = this.extractJson(output);
     return {
       summary: json.summary,
@@ -62,10 +88,10 @@ export class AgentService {
     };
   }
 
-  async runTests(onLog: (log: string) => void): Promise<TestResult> {
+  async runTests(repoPath: string, onLog: (log: string) => void): Promise<TestResult> {
     return new Promise((resolve) => {
       const proc = spawn('npm', ['run', 'test', '--', '--passWithNoTests'], {
-        cwd: this.repoPath,
+        cwd: repoPath,
         env: { ...process.env },
         shell: true,
       });
@@ -97,6 +123,7 @@ export class AgentService {
 
   async fixFailingTests(
     testResult: TestResult,
+    repoPath: string,
     onLog: (log: string) => void,
   ): Promise<void> {
     const prompt = `
@@ -109,12 +136,13 @@ ${testResult.output}
 Responda em JSON: { "summary": "o que foi corrigido nos testes" }
     `.trim();
 
-    await this.runClaude(prompt, null, onLog);
+    await this.runClaude(prompt, null, repoPath, onLog);
   }
 
   private runClaude(
     prompt: string,
     data: BugJobData | null,
+    repoPath: string,
     onLog: (log: string) => void,
   ): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -150,7 +178,7 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
       );
 
       const proc = spawn('npx', args, {
-        cwd: this.repoPath,
+        cwd: repoPath,
         env: {
           ...process.env,
           NO_COLOR: '1',
