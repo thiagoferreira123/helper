@@ -16,6 +16,9 @@ interface DiscordNotifyParams {
   service: string;
   severity: string;
   reportedBy: string;
+  target?: 'main' | 'homologacao';
+  analysis?: { file: string; line: number; rootCause: string; confidence: number };
+  explanation?: string;
 }
 
 @Injectable()
@@ -61,20 +64,49 @@ export class GithubService {
     };
 
     const emoji = severityEmoji[params.severity] || '\u{1F41B}';
+    const isHomolog = params.target === 'homologacao';
+
+    const fields = [
+      { name: 'Repo', value: params.repo, inline: true },
+      { name: 'Feature', value: params.service, inline: true },
+      { name: 'Severidade', value: params.severity, inline: true },
+      { name: 'Reportado por', value: params.reportedBy, inline: true },
+    ];
+
+    if (params.analysis) {
+      fields.push({
+        name: 'Arquivo',
+        value: `\`${params.analysis.file}:${params.analysis.line}\` (${params.analysis.confidence}%)`,
+        inline: false,
+      });
+      fields.push({
+        name: 'Causa raiz',
+        value: params.analysis.rootCause.slice(0, 200),
+        inline: false,
+      });
+    }
+
+    if (params.explanation) {
+      fields.push({
+        name: 'Correcao',
+        value: params.explanation.slice(0, 300),
+        inline: false,
+      });
+    }
+
+    if (params.prUrl) {
+      fields.push({ name: 'PR', value: `[Abrir no GitHub](${params.prUrl})`, inline: false });
+    }
 
     const payload = {
       embeds: [
         {
-          title: `${emoji} Bug Fix PR Aberta`,
+          title: isHomolog
+            ? `${emoji} Bug Fix pushed em homologacao`
+            : `${emoji} Bug Fix PR Aberta na main`,
           description: params.title,
-          color: 0x5865f2,
-          fields: [
-            { name: 'Repo', value: params.repo, inline: true },
-            { name: 'Feature', value: params.service, inline: true },
-            { name: 'Severidade', value: params.severity, inline: true },
-            { name: 'Reportado por', value: params.reportedBy, inline: true },
-            { name: 'PR', value: `[Abrir no GitHub](${params.prUrl})` },
-          ],
+          color: isHomolog ? 0x57f287 : 0x5865f2,
+          fields,
           footer: { text: 'Bug Agent \u{1F916}' },
           timestamp: new Date().toISOString(),
         },

@@ -80,6 +80,21 @@ export class BugProcessor extends WorkerHost {
         // Homologação: merge direto na branch homologacao
         log('Mergeando direto em homologacao...');
         await this.git.mergeIntoBranch(repoPath, branch, 'homologacao');
+        await job.updateProgress(95);
+
+        // Notificar Discord
+        log('Notificando Discord...');
+        await this.github.notifyDiscord({
+          prUrl: '',
+          title: fix.summary,
+          repo: repoName,
+          service: data.service,
+          severity: data.severity,
+          reportedBy: data.reportedBy,
+          target: 'homologacao',
+          analysis: { file: analysis.file, line: analysis.line, rootCause: analysis.rootCause, confidence: analysis.confidence },
+          explanation: fix.explanation,
+        });
         await job.updateProgress(100);
 
         log('Push direto em homologacao concluído.');
@@ -124,6 +139,9 @@ export class BugProcessor extends WorkerHost {
         service: data.service,
         severity: data.severity,
         reportedBy: data.reportedBy,
+        target: 'main',
+        analysis: { file: analysis.file, line: analysis.line, rootCause: analysis.rootCause, confidence: analysis.confidence },
+        explanation: fix.explanation,
       });
       await job.updateProgress(100);
 

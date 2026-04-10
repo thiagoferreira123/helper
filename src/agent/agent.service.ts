@@ -178,12 +178,16 @@ Responda em JSON: { "summary": "o que foi corrigido nos testes" }
 
       const proc = spawn('claude', args, {
         cwd: repoPath,
+        stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
           NO_COLOR: '1',
           TERM: 'dumb',
         },
       });
+
+      // Fechar stdin imediatamente para evitar warning de "no stdin data"
+      proc.stdin.end();
 
       let output = '';
       let errorOutput = '';
